@@ -5,7 +5,7 @@ import sys
 from argparse import ArgumentParser
 
 
-def readParsnp11(input, cutoff, save_blocks):
+def readParsnp11(args):
 
     seqCountRE = re.compile(r'#SequenceCount\s+(\d+)')
     intervalCountRE = re.compile(r'#IntervalCount\s+(\d+)')
@@ -23,7 +23,7 @@ def readParsnp11(input, cutoff, save_blocks):
     sequences = []
     concat = {}
 
-    with open(input) as fp:
+    with open(args.input) as fp:
         for line in fp:
             line = line.rstrip('\n').rstrip('\r')
             if line.startswith('#'):
@@ -52,19 +52,18 @@ def readParsnp11(input, cutoff, save_blocks):
                         clusterID = headerMatch.group(2)
                         sequences.append('')
                 elif line.startswith('='):
-                    if len(sequences[0]) >= cutoff:
-                        print(clusterID)
-                        if save_blocks:
+                    aln_length = len(sequences[0])
+                    concat_length = 0 if len(concat) == 0 else len(concat.itervalues().next())
+                    if aln_length >= args.min_length and len(sequences) >= args.min_size:
+                        if args.blocks:
                             with open(clusterID + '.fasta', 'w') as fasta_file:
                                 for i in range(len(sequences)):
                                     fasta_file.write('>' + headers[str(i+1)]['FILE'] + '\n' + sequences[i].upper() + '\n')
-    
-                        if len(concat) == 0:
-                            for i in range(len(sequences)):
-                                concat[headers[str(i+1)]['FILE']] = sequences[i].upper()
-                        else:
-                            for i in range(len(sequences)):
-                                concat[headers[str(i+1)]['FILE']] += sequences[i].upper()                        
+
+                        sys.stderr.write('{} {} - {} ({})\n'.format(clusterID, concat_length, aln_length, len(sequences)))
+
+                        for i in range(len(sequences)):
+                            concat[headers[str(i+1)]['FILE']] = concat.get(headers[str(i+1)]['FILE'], '') + sequences[i].upper()
 
                     sequences = []
                 else:
@@ -72,7 +71,7 @@ def readParsnp11(input, cutoff, save_blocks):
     return concat
 
 
-def readMauve(input, cutoff, save_blocks):
+def readMauve(args):
 
     headerRE = re.compile(r'>\s*(\d+):\d+-\d+\s+[\+-]\s+(.+)')
     seqFileRE = re.compile(r'#Sequence(\d+)File\s+(.+)')
@@ -81,7 +80,7 @@ def readMauve(input, cutoff, save_blocks):
     sequences = {}
     counter = 0
     
-    with open(input) as fp:
+    with open(args.input) as fp:
         for line in fp:
             line = line.rstrip('\n').rstrip('\r')
             if line.startswith('#'):
@@ -99,11 +98,14 @@ def readMauve(input, cutoff, save_blocks):
                         sys.exit('Could not read sequence #SequenceFile\n' + line)
                 elif line.startswith('='):
                     aln_length = len(sequences.itervalues().next())
-                    if aln_length >= cutoff:
-                        if save_blocks:
+                    concat_length = 0 if len(concat) == 0 else len(concat.itervalues().next())
+                    if aln_length >= args.min_length and len(sequences) >= args.min_size:
+                        if args.blocks:
                             with open('block{}.fna'.format(counter), 'w') as fasta_file:
                                 for idx, seq in sequences.items():
                                     fasta_file.write('>' + headers[idx] + '\n' + seq.upper() + '\n')
+
+                        sys.stderr.write('{} {} - {} ({})\n'.format(counter, concat_length, aln_length, len(sequences)))
 
                         for idx, seq in sequences.items():
                             concat[headers[idx]] = concat.get(headers[idx], '') + seq.upper()
@@ -122,11 +124,14 @@ def main():
     parser = ArgumentParser(description='Convert an XMFA file to multiple FASTA files.')
     parser.add_argument('-i', '--input', metavar='FILE', required=True, help='an input sequence file in XMFA format.')
     parser.add_argument('-o', '--output', metavar='FILE', required=False, help='an output sequence file in FASTA format containing concatenated sequences.')
-    parser.add_argument('-c', '--cutoff', type=int, default=1, help='minimum alignment length.')
+    parser.add_argument('--min_length', type=int, default=1, help='minimum alignment length.')
+    parser.add_argument('--min_size', type=int, default=1, help='minimum number of sequence in a block.')
     parser.add_argument('-b', '--blocks', action="store_true", help='save each block to a separate fasta file')
     args = parser.parse_args()
     
     format = 'parsnp11'
+
+    sys.stderr.write('ID start - length (sequence count)\n')
 
     with open(args.input) as fp:
         for line in fp:
@@ -138,9 +143,9 @@ def main():
                 break
 
     if format == 'parsnp11':
-        sequences = readParsnp11(args.input, args.cutoff, args.blocks)
+        sequences = readParsnp11(args)
     elif format == 'mauve1':
-        sequences = readMauve(args.input, args.cutoff, args.blocks)
+        sequences = readMauve(args)
     else:
         sys.exit('File format not recognized')
 
